@@ -25,8 +25,6 @@ import shutil
 
 
 def get_step_results(results,nodes,links,rgs,sys,config,params):
-    
-    # Calculate reward
     delt_flooding,delt_CSO,CSOtem,delt_Qtw=0,0,0,0
     for _temp in config['reward_targets']:
         if _temp[1] == 'flooding':
@@ -89,7 +87,6 @@ def get_step_results(results,nodes,links,rgs,sys,config,params):
             reward = 1 / (1 + delt_flooding/delt_Qtw + delt_CSO/delt_Qtw) - 1
     
     else:
-        # maybe the real derivate
         if results['inflow'][-1] == 0:
             reward = 0
         else:
@@ -111,7 +108,6 @@ def get_step_results(results,nodes,links,rgs,sys,config,params):
 
 
 class SWMM_ENV:
-    #can be used for every SWMM inp
     def __init__(self,params):
         '''
         params: a dictionary with input

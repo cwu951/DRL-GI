@@ -103,25 +103,18 @@ def interact(i,ep):
 if Train:
     #tf.config.experimental_run_functions_eagerly(True)
 
-    # main training process   
     history = {'episode': [], 'Batch_reward': [], 'Episode_reward': [], 'Loss': []}
     
-    # Iterate over the number of epochs
     for epoch in range(model.params['training_step']):
-        # Initialize the sum of the returns, lengths and number of episodes for each epoch
         sum_return = 0
         sum_length = 0
         num_episodes = 0
-        
-        # Initialize the buffer
+
         buffer = Buffer.Buffer(model.params['state_dim'], int(len(raindata[0])*model.params['num_rain']))
-        
-        # Iterate over the steps of each epoch
-        # Parallel method in joblib
+
         res = Parallel(n_jobs=10)(delayed(interact)(i,model.params['epsilon']) for i in range(model.params['num_rain'])) 
         
         for i in range(model.params['num_rain']):
-            #s, a, r, vt, lo, lastvalue in buffer
             for o,a,r,o_ in zip(res[i][0],res[i][1],res[i][2],res[i][3]):
                 buffer.store(o,a,r,o_)
             buffer.finish_trajectory(res[i][4])
@@ -129,7 +122,6 @@ if Train:
             sum_length += res[i][6]
             num_episodes += 1
         
-        # Get values from the buffer
         (
             observation_buffer,
             action_buffer,
@@ -138,30 +130,25 @@ if Train:
             advantage_buffer,
         ) = buffer.get()
 
-        # Update the policy and implement early stopping using KL divergence
         for _ in range(model.params['train_iterations']):
             DQN.train_value(observation_buffer, action_buffer, reward_buffer, observation_next_buffer, model)
             
         model.model.save_weights('./model/dqn.h5')
         model.model.save_weights('./model/target_dqn.h5')    
-        # log training results
         history['episode'].append(epoch)
         history['Episode_reward'].append(sum_return)
-        # reduce the epsilon egreedy and save training log
         if model.params['epsilon'] >= model.params['ep_min'] and epoch % 10 == 0:
             model.params['epsilon'] *= model.params['ep_decay']
         
-        # Print mean return and length for each epoch
         print(
             f" Epoch: {epoch + 1}. Return: {sum_return}. Mean Length: {sum_length / num_episodes}. Epsilon: {model.params['epsilon']}"
         )
         
-        np.save('./Results/Train1.npy',history)
+        np.save('./Results/Train.npy',history)
     
-    # plot
     plt.figure()
     plt.plot(history['Episode_reward'])
-    plt.savefig('./Results//Train1.tif')
+    plt.savefig('./Results//Train.tif')
 
    
 ###############################################################################

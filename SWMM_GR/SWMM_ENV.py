@@ -1,13 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Tue Aug 16 22:41:39 2022
-
-@author: chong
-
-SWMM environment
-can be used for any inp file
-established based pyswmm
-"""
 import os
 os.environ['CONDA_DLL_SEARCH_MODIFICATION_ENABLE']="1"
 import numpy as np
@@ -25,8 +15,6 @@ import shutil
 
 
 def get_step_results(results,nodes,links,rgs,sys,config,params):
-    
-    # Calculate reward
     delt_flooding,delt_CSO,CSOtem,delt_Qtw=0,0,0,0
     for _temp in config['reward_targets']:
         if _temp[1] == 'flooding':
@@ -36,10 +24,7 @@ def get_step_results(results,nodes,links,rgs,sys,config,params):
                 delt_flooding += nodes[_temp[0]].statistics['flooding_volume']
             results['flooding'].append(sys.routing_stats[_temp[1]])
         else:
-            #cum_cso = sys.routing_stats['outflow']
             CSOtem += nodes[_temp[0]].cumulative_inflow
-            # log the cumulative value
-            #self.data_log[_temp[1]][_temp[0]].append(cum_cso)
     delt_CSO = CSOtem - results['CSO'][-1]
     results['CSO'].append(CSOtem)
             
@@ -50,7 +35,6 @@ def get_step_results(results,nodes,links,rgs,sys,config,params):
     delt_Qtw = Qtw - results['inflow'][-1]
     results['inflow'].append(Qtw)
     
-    #flooding time and cso time
     floodingt, delt_flooding_time = 0,0
     for n in nodes:
         if n.statistics['flooding_duration'] >= floodingt:
@@ -65,7 +49,6 @@ def get_step_results(results,nodes,links,rgs,sys,config,params):
 
     time = len(results['total_CSO_time']) * 1
 
-    # 3 types of reward
     if params['reward_type'] == '1':
         #if results['inflow'][-1] == 0:
         #    reward = 0
@@ -88,7 +71,6 @@ def get_step_results(results,nodes,links,rgs,sys,config,params):
             reward = 1 / (1 + delt_flooding/delt_Qtw + delt_CSO/delt_Qtw) - 1
     
     else:
-        # maybe the real derivate
         if results['inflow'][-1] == 0:
             reward = 0
         else:
@@ -110,15 +92,7 @@ def get_step_results(results,nodes,links,rgs,sys,config,params):
 
 
 class SWMM_ENV:
-    #can be used for every SWMM inp
     def __init__(self,params):
-        '''
-        params: a dictionary with input
-        orf: original file of swmm inp
-        control_asset: list of contorl objective, pumps' name
-        advance_seconds: simulation time interval
-        flood_nodes: selected node for flooding checking
-        '''
         self.params = params
         self.config = yaml.load(open(self.params['parm']+".yaml"), yaml.FullLoader)
         #self.t=[]
@@ -135,13 +109,11 @@ class SWMM_ENV:
         self.sim=Simulation(root+'/'+self.params['orf_save']+str(rainid)+'_rain.inp')
         self.sim.start()
         
-        # One step
         if self.params['advance_seconds'] is None:
             self.sim._model.swmm_step()
         else:
             self.sim._model.swmm_stride(self.params['advance_seconds'])
                 
-        #obtain states and reward term by yaml (config)
         nodes = Nodes(self.sim)
         links = Links(self.sim)
         rgs = RainGages(self.sim)
@@ -156,7 +128,6 @@ class SWMM_ENV:
             else:
                 states.append(rgs[_temp[0]].rainfall)
 
-        # Get results, record CSO and flooding
         self.results = {}
         
         self.results['CSO'], self.results['flooding'], self.results['inflow'] = [0], [0], [0]
@@ -166,12 +137,10 @@ class SWMM_ENV:
         return states
         
     def step(self,action):
-        # Get simulation results
         nodes = Nodes(self.sim)
         links = Links(self.sim)
         rgs = RainGages(self.sim)
         sys = SystemStats(self.sim)
-        #obtain states and reward term by yaml (config)
         states = []
         for _temp in self.config["states"]:
             if _temp[1] == 'depthN':
@@ -183,11 +152,9 @@ class SWMM_ENV:
             else:
                 states.append(rgs[_temp[0]].rainfall)
             
-        # Set control actions
         for item,a in zip(self.config['action_assets'],action):
             links[item].target_setting = a
         
-        # One step
         if self.params['advance_seconds'] is None:
             time = self.sim._model.swmm_step()
         else:
@@ -195,14 +162,12 @@ class SWMM_ENV:
         #self.t.append(self.sim._model.getCurrentSimulationTime())
         done = False if time > 0 else True
 
-        # Get reward and results
         self.results, reward = get_step_results(self.results,nodes,links,rgs,sys,self.config,self.params)
 
         self.results['state'].append(states)
         self.results['action'].append(action)
         self.results['rewards'].append(reward)
             
-        # Check for simulation completion
         if done:
             self.sim._model.swmm_end()
             self.sim._model.swmm_close()

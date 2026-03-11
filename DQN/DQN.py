@@ -44,7 +44,6 @@ class DQN:
         self.model.load_weights(file+'/dqn.h5')
         self.target_model.load_weights(file+'/target_dqn.h5')
 
-# 
 def sample_action(observation,model,train_log):
     #input state, output action
     if train_log:

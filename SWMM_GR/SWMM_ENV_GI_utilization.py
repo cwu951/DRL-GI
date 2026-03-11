@@ -74,10 +74,8 @@ class SWMM_ENV:
         self.run_baseline = params.get('run_baseline', False)
         self.run_gi_only = params.get('run_gi_only', False)
         
-        #  Get process ID (for multi-process environments)
         self.process_id = params.get('process_id', 0)
         
-        # Store simulators for baseline and GI-only cases
         self.baseline_sim = None
         self.gi_only_sim = None
         
@@ -85,15 +83,12 @@ class SWMM_ENV:
         self.baseline_done = False
         self.gi_only_done = False
 
-        # Store cumulative values for integral calculation
         self.integral_data = None
     
     def reset(self,rain,rainid,trainlog,root):
         
-        # Add unique identifier for multi-process environment
         unique_id = f"{self.process_id}_{rainid}"
         
-        # Main simulation (with GI and DQN)
         if trainlog:
             root_gi = root + '/SWMM_GR/_teminp'
             root_base = root + '/SWMM/_teminp'
@@ -181,6 +176,11 @@ class SWMM_ENV:
         self.results['res'] = [0]
         self.results['state'], self.results['action'], self.results['rewards'] = [], [], []
 
+        # Per-step reward3 and r1 lists
+        self.results['reward3_list'] = []
+        self.results['r1_list'] = []
+
+
         # Reset integral data
         self.integral_data = {
             'base_flooding': [0],
@@ -199,7 +199,6 @@ class SWMM_ENV:
         return states
         
     def step(self,action):
-        # Get main simulation results
         nodes = Nodes(self.sim)
         links = Links(self.sim)
         rgs = RainGages(self.sim)
@@ -216,7 +215,6 @@ class SWMM_ENV:
             else:
                 states.append(rgs[_temp[0]].rainfall)
             
-        # Set DQN control actions (only for main simulation)
         for item,a in zip(self.config['action_assets'],action):
             links[item].target_setting = a
         
@@ -254,8 +252,13 @@ class SWMM_ENV:
             self.results, nodes, links, rgs, sys, self.config, self.params
         )
 
+        # Always record this step's reward3 
+        self.results['reward3_list'].append(reward3)
+
         # Calculate new reward r1
         reward = reward3  # Default: reward3
+        # Track r1 
+        r1_step = 0.0
         
         if self.run_baseline and self.run_gi_only and self.baseline_sim and self.gi_only_sim:
             try:
@@ -288,7 +291,6 @@ class SWMM_ENV:
                 self.integral_data['gi_dqn_cso'].append(self.results['CSO'][-1])
                 self.integral_data['gi_dqn_inflow'].append(self.results['inflow'][-1])
                 
-                #  Calculate integrals
                 dt = self.params['advance_seconds']
                 
                 # delta_1: Integral of inflow difference between base and GI-only
@@ -313,20 +315,21 @@ class SWMM_ENV:
                 else:
                     r1_raw = 0
                 
-                # Map to [-1, 0]
                 r1 = -np.exp(-r1_raw)
+
+                r1_step = r1
                 
-                # Combine rewards
                 reward = 0.7 * reward3 + 0.3 * r1
             except Exception as e:
                 print(f"Error in reward calculation: {e}")
                 reward = reward3
 
+        self.results['r1_list'].append(r1_step)
+
         self.results['state'].append(states)
         self.results['action'].append(action)
         self.results['rewards'].append(reward)
             
-        # End simulation
         if done:
             self.sim._model.swmm_end()
             self.sim._model.swmm_close()

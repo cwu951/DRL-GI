@@ -10,7 +10,7 @@ sys.path.append("..")
 
 import numpy as np
 import pandas as pd
-from SWMM_GR import SWMM_ENV_GI_utilization as SWMM_ENV
+from SWMM_GR import SWMM_ENV_o as SWMM_ENV
 from DQN import Buffer
 from DQN import DQN as DQN
 import tensorflow as tf
@@ -28,15 +28,13 @@ init_train=True
 tf.compat.v1.reset_default_graph()
 
 env_params={
-        'orf':os.path.dirname(os.getcwd())+'/SWMM_GR/chaohu_noHC',
+        'orf':os.path.dirname(os.getcwd())+'/SWMM_GR/chaohu',
         'orf_save':'chaohu_GI_RTC',
         'parm':os.path.dirname(os.getcwd())+'/states_yaml/chaohu',
         'advance_seconds':300,
         'kf':1,
         'kc':1,
-        'reward_type':'3',
-        'run_baseline': True,  # Flag to execute baseline simulation
-        'run_gi_only': True    # Flag to execute Green Infrastructure only simulation
+        'reward_type':'3'
     }
 env=SWMM_ENV.SWMM_ENV(env_params)
 
@@ -52,7 +50,7 @@ agent_params={
     'num_rain':50,
 
     'train_iterations':20,
-    'training_step':800,
+    'training_step':1000,
     'gamma':0.01,
     'epsilon':0.1,
     'ep_min':1e-50,
@@ -73,61 +71,47 @@ print('model done')
 # Train
 ###############################################################################
     
-def interact(i, ep):
-    local_env_params = env_params.copy()
-    local_env_params['process_id'] = i
-    
-    env = SWMM_ENV.SWMM_ENV(local_env_params)
+def interact(i,ep):
+    env=SWMM_ENV.SWMM_ENV(env_params)
     tem_model = DQN.DQN(agent_params)
     tem_model.load_model('./model/')
-    tem_model.params['epsilon'] = ep
-    
-    s, a, r, s_ = [], [], [], []
-    observation, episode_return, episode_length = env.reset(raindata[i], i, True, os.path.dirname(os.getcwd())), 0, 0
+    tem_model.params['epsilon']=ep
+    s,a,r,s_ = [],[],[],[]
+    observation, episode_return, episode_length = env.reset(raindata[i],i,True,os.path.dirname(os.getcwd())), 0, 0
     
     done = False
     while not done:
+        # Get the action, and take one step in the environment
         observation = np.array(observation).reshape(1, -1)
-        action = DQN.sample_action(observation, tem_model, True)
+        action = DQN.sample_action(observation,tem_model,True)
         at = tem_model.action_table[int(action[0].numpy())].tolist()
         observation_new, reward, results, done = env.step(at)
         episode_return += reward
         episode_length += 1
-        
+
+        # Store obs, act, rew
+        # buffer.store(observation, action, reward, value_t, logprobability_t)
         s.append(observation)
         a.append(action)
         r.append(reward)
         s_.append(observation_new)
         
+        # Update the observation
         observation = observation_new
-    
+    # Finish trajectory if reached to a terminal state
     last_value = 0 if done else tem_model.predict(observation.reshape(1, -1))
-
-    episode_reward3 = sum(env.results.get('reward3_list', []))
-    episode_r1 = sum(env.results.get('r1_list', []))
-
-    return s, a, r, s_, last_value, episode_return, episode_length, episode_reward3, episode_r1
+    return s,a,r,s_,last_value,episode_return,episode_length
 
 if Train:
     #tf.config.experimental_run_functions_eagerly(True)
-
-    history = {
-        'episode': [],
-        'Batch_reward': [],
-        'Episode_reward': [],
-        'Episode_reward3': [],
-        'Episode_r1': [],
-        'Loss': []
-    }
+    
+    history = {'episode': [], 'Batch_reward': [], 'Episode_reward': [], 'Loss': []}
     
     for epoch in range(model.params['training_step']):
         sum_return = 0
         sum_length = 0
         num_episodes = 0
 
-        sum_reward3 = 0
-        sum_r1 = 0
-        
         buffer = Buffer.Buffer(model.params['state_dim'], int(len(raindata[0])*model.params['num_rain']))
 
         res = Parallel(n_jobs=10)(delayed(interact)(i,model.params['epsilon']) for i in range(model.params['num_rain'])) 
@@ -139,9 +123,7 @@ if Train:
             sum_return += res[i][5]
             sum_length += res[i][6]
             num_episodes += 1
-            
-            sum_reward3 += res[i][7]
-            sum_r1 += res[i][8]
+        
         
         (
             observation_buffer,
@@ -151,60 +133,26 @@ if Train:
             advantage_buffer,
         ) = buffer.get()
 
+      
         for _ in range(model.params['train_iterations']):
             DQN.train_value(observation_buffer, action_buffer, reward_buffer, observation_next_buffer, model)
             
         model.model.save_weights('./model/dqn.h5')
-        model.model.save_weights('./model/target_dqn.h5') 
-
-        if (epoch+1) % 50 == 0: 
-            model.model.save_weights('./model/dqn_'+str(epoch+1)+'.h5')
-            model.model.save_weights('./model/target_dqn_'+str(epoch+1)+'.h5')
-
+        model.model.save_weights('./model/target_dqn.h5')    
         history['episode'].append(epoch)
         history['Episode_reward'].append(sum_return)
-
-        history['Episode_reward3'].append(sum_reward3)
-        history['Episode_r1'].append(sum_r1)
-
         if model.params['epsilon'] >= model.params['ep_min'] and epoch % 10 == 0:
             model.params['epsilon'] *= model.params['ep_decay']
         
         print(
-            f" Epoch: {epoch + 1}. Return: {sum_return}. "
-            f"Reward3: {sum_reward3}. R1: {sum_r1}. "
-            f"Mean Length: {sum_length / num_episodes}. Epsilon: {model.params['epsilon']}"
+            f" Epoch: {epoch + 1}. Return: {sum_return}. Mean Length: {sum_length / num_episodes}. Epsilon: {model.params['epsilon']}"
         )
         
         np.save('./Results/Train_GI.npy',history)
 
-    fig, axes = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
-    
-    axes[0].plot(history['Episode_reward'], label='Combined Reward (0.7*r3 + 0.3*r1)')
-    axes[0].set_ylabel('Cumulative Reward')
-    axes[0].set_title('Combined Reward per Epoch')
-    axes[0].legend()
-    axes[0].grid(True)
-    
-    axes[1].plot(history['Episode_reward3'], label='Reward3 (unweighted)', color='tab:orange')
-    axes[1].set_ylabel('Cumulative Reward3')
-    axes[1].set_title('Reward3 Component per Epoch')
-    axes[1].legend()
-    axes[1].grid(True)
-    
-    axes[2].plot(history['Episode_r1'], label='R1 (unweighted)', color='tab:green')
-    axes[2].set_ylabel('Cumulative R1')
-    axes[2].set_xlabel('Epoch')
-    axes[2].set_title('R1 Component per Epoch')
-    axes[2].legend()
-    axes[2].grid(True)
-    
-    plt.tight_layout()
-    plt.savefig('./Results//Train_GI.tif')
-
-    np.save('./Results/Train_GI_combined_reward.npy', history['Episode_reward'])
-    np.save('./Results/Train_GI_reward3.npy', history['Episode_reward3'])
-    np.save('./Results/Train_GI_r1.npy', history['Episode_r1'])
+    plt.figure()
+    plt.plot(history['Episode_reward'])
+    plt.savefig('./Results//Train_GI.tif') 
 
    
 ###############################################################################
